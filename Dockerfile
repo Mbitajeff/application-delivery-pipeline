@@ -45,8 +45,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /build
 
 # Install OS build dependencies needed to compile bcrypt's C extension.
+# Run apt-get upgrade first to pull in any security patches for the base image.
 # These are NOT copied to the runtime stage.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
         gcc \
         libffi-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -77,6 +78,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ENVIRONMENT=production \
     HOST=0.0.0.0 \
     PORT=8000
+
+# Upgrade OS packages in the runtime stage to patch any CVEs in the base image.
+# This runs before copying application files so the layer is cached
+# and only re-runs when the base image changes.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group.
 # UID/GID 65532 satisfies Checkov CKV_K8S_40 (requires UID > 10000)
