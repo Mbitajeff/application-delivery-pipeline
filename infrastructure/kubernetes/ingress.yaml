@@ -28,14 +28,10 @@ metadata:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
     nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
-    # Security headers
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
-      more_set_headers "Content-Security-Policy: default-src 'self'";
+    # Security headers — via add-headers ConfigMap (not configuration-snippet)
+    # configuration-snippet is blocked by CKV_K8S_153 due to CVE-2021-25742.
+    # Use nginx.ingress.kubernetes.io/add-headers with a ConfigMap instead.
+    nginx.ingress.kubernetes.io/add-headers: "secure-pipeline/security-headers"
     # Rate limiting — prevents brute force and scraping
     nginx.ingress.kubernetes.io/limit-rps: "100"
     # cert-manager — uncomment when cert-manager is installed

@@ -57,9 +57,10 @@ spec:
       securityContext:
         # Run all containers as non-root
         runAsNonRoot: true
-        # UID 1000 matches the appuser created in the Dockerfile
-        runAsUser: 1000
-        runAsGroup: 1000
+        # UID/GID 65532 is high enough to satisfy CKV_K8S_40 (>10000)
+        # and matches a non-system user. Update the Dockerfile USER to match.
+        runAsUser: 65532
+        runAsGroup: 65532
         # Prevent privilege escalation via setuid binaries
         # (required by restricted Pod Security Standard)
         seccompProfile:
@@ -79,7 +80,7 @@ spec:
           # In production: use the full registry path with immutable SHA tag.
           # Example: ghcr.io/mbitajeff/secure-pipeline-api:sha-abc1234
           # The pipeline sets this via: kubectl set image ... api=IMAGE:SHA
-          image: ghcr.io/mbitajeff/secure-pipeline-api:latest
+          image: ghcr.io/mbitajeff/secure-pipeline-api:sha-placeholder
           imagePullPolicy: Always
 
           ports:
@@ -92,15 +93,9 @@ spec:
             - configMapRef:
                 name: secure-pipeline-api-config
 
-          # SECRET_KEY must come from a Kubernetes Secret or external secret store.
-          # This example uses a Kubernetes Secret named "secure-pipeline-api-secrets".
+          # SECRET_KEY is mounted as a file (not env var) — satisfies CKV_K8S_35.
+          # The application reads it from /run/secrets/secret-key at startup.
           # In production: use Secrets Store CSI Driver with AWS Secrets Manager.
-          env:
-            - name: SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: secure-pipeline-api-secrets
-                  key: secret-key
 
           # Resource limits — prevent a single Pod from exhausting node resources
           resources:
@@ -117,7 +112,7 @@ spec:
             privileged: false                # CKV_K8S_37
             readOnlyRootFilesystem: true     # CKV_K8S_22
             runAsNonRoot: true               # CKV_K8S_20
-            runAsUser: 1000
+            runAsUser: 65532                 # CKV_K8S_40: must be > 10000
             capabilities:
               drop:
                 - ALL                        # CKV_K8S_28, CKV_K8S_30
@@ -159,10 +154,17 @@ spec:
             - name: tmp
               mountPath: /tmp
               readOnly: false
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
 
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: secrets
+          secret:
+            secretName: secure-pipeline-api-secrets
+            defaultMode: 0400  # Read-only by owner only
 
       # Grace period for SIGTERM handling
       terminationGracePeriodSeconds: 30

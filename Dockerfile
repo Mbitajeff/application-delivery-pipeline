@@ -79,10 +79,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000
 
 # Create a non-root user and group.
-# UID/GID 1000 is conventional for the first non-system user.
-# Using a named user (not just numeric UID) makes ps/log output readable.
-RUN groupadd --gid 1000 appgroup && \
-    useradd --uid 1000 --gid appgroup --shell /bin/sh --create-home appuser
+# UID/GID 65532 satisfies Checkov CKV_K8S_40 (requires UID > 10000)
+# and is high enough to avoid conflicts with any system UIDs.
+RUN groupadd --gid 65532 appgroup && \
+    useradd --uid 65532 --gid appgroup --shell /bin/sh --create-home appuser
 
 WORKDIR /app
 
