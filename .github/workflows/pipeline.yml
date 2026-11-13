@@ -1,4 +1,4 @@
-name: Secure Pipeline
+﻿name: Secure Pipeline
 
 on:
   push:
@@ -15,6 +15,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME_LOWER: ghcr.io/mbitajeff/application-delivery-pipeline
   PYTHON_VERSION: "3.12"
 
 jobs:
@@ -205,7 +206,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_NAME_LOWER }}
           tags: |
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
@@ -321,13 +322,13 @@ jobs:
           context: .
           target: runtime
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          tags: ${{ env.IMAGE_NAME_LOWER }}:sha-${{ github.sha }}
           cache-from: type=gha
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          image: ${{ env.IMAGE_NAME_LOWER }}:sha-${{ github.sha }}
           format: spdx-json
           artifact-name: sbom-${{ github.sha }}.spdx.json
           output-file: sbom.spdx.json
@@ -339,14 +340,14 @@ jobs:
       - name: Sign image
         run: |
           cosign sign --yes \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+            ${{ env.IMAGE_NAME_LOWER }}@${{ steps.push.outputs.digest }}
 
       - name: Attach SBOM attestation
         run: |
           cosign attest --yes \
             --type spdxjson \
             --predicate sbom.spdx.json \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+            ${{ env.IMAGE_NAME_LOWER }}@${{ steps.push.outputs.digest }}
 
   # ---------------------------------------------------------------------------
   # Job 8: DAST (warn-only)
@@ -371,8 +372,8 @@ jobs:
 
       - name: Pull application image
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} app:dast
+          docker pull ${{ env.IMAGE_NAME_LOWER }}:sha-${{ github.sha }}
+          docker tag ${{ env.IMAGE_NAME_LOWER }}:sha-${{ github.sha }} app:dast
 
       - name: Start application
         run: |
@@ -429,4 +430,5 @@ jobs:
       - name: Deployment approved
         run: |
           echo "Approved by: ${{ github.actor }}"
-          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          echo "Image: ${{ env.IMAGE_NAME_LOWER }}:sha-${{ github.sha }}"
+
