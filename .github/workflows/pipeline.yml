@@ -289,7 +289,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Rebuild image for scanning
+      # Rebuild image for scanning
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -307,6 +307,24 @@ jobs:
           scanners: vuln
           severity: CRITICAL
           exit-code: "1"
+          format: table
+          output: trivy-image.txt
+          ignore-unfixed: true
+          trivy-config: ""
+
+      - name: Show Trivy results
+        if: always()
+        run: cat trivy-image.txt || true
+
+      - name: Trivy image scan (SARIF for Security tab)
+        uses: aquasecurity/trivy-action@v0.36.0
+        if: always()
+        with:
+          scan-type: image
+          image-ref: scan-target:latest
+          scanners: vuln
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "0"
           format: sarif
           output: trivy-image.sarif
           ignore-unfixed: true
