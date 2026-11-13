@@ -1,36 +1,3 @@
-# =============================================================================
-# Main CI/CD Pipeline — runs on push to main
-# =============================================================================
-#
-# Job execution order:
-#   pre-flight (Gitleaks + lint)
-#       │
-#       ├── sast (Semgrep)      ─┐
-#       ├── sca (Trivy fs)      ─┤── all three parallel
-#       └── iac-scan (Checkov)  ─┘
-#                │
-#           test (pytest + coverage)
-#                │
-#           build (Docker multi-stage)
-#                │
-#       ┌────────┴────────┐
-#   image-scan         sbom-sign
-#   (Trivy image)   (Syft + Cosign)
-#       └────────┬────────┘
-#            push (GHCR)
-#                │
-#             dast (ZAP)
-#                │
-#         deploy-gate (manual approval)
-#
-# Note on action versions:
-#   Actions use verified version tags rather than fabricated SHAs.
-#   For highest security, pin to commit SHAs after verifying them at
-#   github.com/ACTION/releases — see docs/PIPELINE.md.
-#   The trivy-action uses v0.36.0, the first clean release after the
-#   March 2026 supply chain compromise (CVE-2026-33634).
-# =============================================================================
-
 name: Secure Pipeline
 
 on:
@@ -51,17 +18,17 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
-  # ===========================================================================
-  # Job 1: Pre-flight — secrets + lint
-  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Job 1: pre-flight — secret scan + lint
+  # ---------------------------------------------------------------------------
   pre-flight:
     name: Pre-flight (Secrets + Lint)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
-      - name: Checkout (full history for secret scan)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -81,12 +48,12 @@ jobs:
       - name: Install Ruff
         run: pip install ruff==0.17.4
 
-      - name: Lint (Ruff)
+      - name: Lint
         run: ruff check app/
 
-  # ===========================================================================
-  # Jobs 2–4: Parallel security analysis
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # Jobs 2-4: parallel security analysis
+  # ---------------------------------------------------------------------------
   sast:
     name: SAST (Semgrep)
     needs: pre-flight
@@ -94,7 +61,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -111,7 +77,7 @@ jobs:
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
-      - name: Upload SARIF to GitHub Security
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
@@ -119,19 +85,17 @@ jobs:
         continue-on-error: true
 
   sca:
-    name: SCA (Trivy — dependencies)
+    name: SCA (Trivy filesystem)
     needs: pre-flight
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Using v0.36.0 — first clean release after CVE-2026-33634 supply chain attack
-      - name: Run Trivy filesystem scan
+      - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
@@ -143,7 +107,7 @@ jobs:
           output: trivy-sca.sarif
           ignore-unfixed: true
 
-      - name: Upload Trivy SCA SARIF
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
@@ -157,7 +121,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -172,7 +135,7 @@ jobs:
           output_file_path: console,checkov.sarif
           soft_fail: false
 
-      - name: Upload Checkov SARIF
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
@@ -180,16 +143,15 @@ jobs:
           category: checkov
         continue-on-error: true
 
-  # ===========================================================================
-  # Job 5: Tests + coverage gate
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # Job 5: tests + coverage
+  # ---------------------------------------------------------------------------
   test:
     name: Tests + Coverage
     needs: [sast, sca, iac-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -213,9 +175,9 @@ jobs:
           path: coverage.xml
           retention-days: 30
 
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
   # Job 6: Docker build
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
   build:
     name: Docker Build
     needs: test
@@ -223,10 +185,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -250,7 +210,7 @@ jobs:
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
 
-      - name: Build Docker image
+      - name: Build image
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -263,9 +223,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ===========================================================================
-  # Jobs 7a + 7b: Image scan and SBOM+sign (parallel)
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # Job 7a: image scan
+  # ---------------------------------------------------------------------------
   image-scan:
     name: Image Scan (Trivy)
     needs: build
@@ -274,7 +234,6 @@ jobs:
       contents: read
       security-events: write
       packages: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -289,7 +248,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Rebuild image for scanning
+      - name: Rebuild image for scanning
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -298,8 +257,7 @@ jobs:
           tags: scan-target:latest
           cache-from: type=gha
 
-      # Using v0.36.0 — first clean release after CVE-2026-33634
-      - name: Trivy image scan
+      - name: Trivy image scan (table — visible in logs)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
@@ -308,13 +266,7 @@ jobs:
           severity: CRITICAL
           exit-code: "1"
           format: table
-          output: trivy-image.txt
           ignore-unfixed: true
-          trivy-config: ""
-
-      - name: Show Trivy results
-        if: always()
-        run: cat trivy-image.txt || true
 
       - name: Trivy image scan (SARIF for Security tab)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -329,7 +281,7 @@ jobs:
           output: trivy-image.sarif
           ignore-unfixed: true
 
-      - name: Upload image scan SARIF
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
@@ -337,15 +289,17 @@ jobs:
           category: trivy-image
         continue-on-error: true
 
+  # ---------------------------------------------------------------------------
+  # Job 7b: SBOM generation + image signing
+  # ---------------------------------------------------------------------------
   sbom-sign:
-    name: SBOM Generation + Image Signing
+    name: SBOM + Image Signing
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write  # Required for Cosign keyless signing
-
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -382,21 +336,21 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign image (keyless via GitHub OIDC)
+      - name: Sign image
         run: |
           cosign sign --yes \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
 
-      - name: Attach SBOM as attestation
+      - name: Attach SBOM attestation
         run: |
           cosign attest --yes \
             --type spdxjson \
             --predicate sbom.spdx.json \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
 
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
   # Job 8: DAST (warn-only)
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
   dast:
     name: DAST (OWASP ZAP)
     needs: [image-scan, sbom-sign]
@@ -404,7 +358,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -416,12 +369,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull and tag application image
+      - name: Pull application image
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} app:dast
 
-      - name: Start application container
+      - name: Start application
         run: |
           docker run -d \
             --name app-dast \
@@ -445,9 +398,9 @@ jobs:
               -r /zap/reports/zap-report.html \
               -J /zap/reports/zap-report.json \
               -I
-        continue-on-error: true  # Warn-only until baseline established
+        continue-on-error: true
 
-      - name: Stop application container
+      - name: Stop application
         if: always()
         run: docker stop app-dast && docker rm app-dast
 
@@ -459,9 +412,9 @@ jobs:
           path: security/zap-reports/
           retention-days: 30
 
-  # ===========================================================================
-  # Job 9: Deployment gate (manual approval)
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # Job 9: deployment gate (manual approval)
+  # ---------------------------------------------------------------------------
   deploy-gate:
     name: Deployment Gate
     needs: dast
@@ -472,10 +425,8 @@ jobs:
       url: https://api.example.com
     permissions:
       contents: read
-
     steps:
       - name: Deployment approved
         run: |
           echo "Approved by: ${{ github.actor }}"
           echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
-          echo "Commit: ${{ github.sha }}"
