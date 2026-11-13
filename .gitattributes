@@ -1,0 +1,9 @@
+# Normalise line endings to LF on commit, regardless of OS.
+# GitHub Actions runners are Linux — they expect LF.
+* text=auto eol=lf
+
+# Explicitly binary files — do not modify
+*.png binary
+*.jpg binary
+*.ico binary
+*.whl binary

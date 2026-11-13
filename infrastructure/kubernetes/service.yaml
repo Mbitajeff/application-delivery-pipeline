@@ -1,0 +1,22 @@
+---
+# ClusterIP Service — internal only.
+#
+# External traffic enters via the Ingress (which fronts this Service).
+# No NodePort or LoadBalancer type — reduces direct exposure.
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-pipeline-api
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+    app.kubernetes.io/component: application
+spec:
+  type: ClusterIP
+  selector:
+    app: secure-pipeline-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http  # Named port from the Deployment container spec
+      protocol: TCP

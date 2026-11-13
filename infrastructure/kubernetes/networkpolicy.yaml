@@ -1,0 +1,102 @@
+---
+# Default deny-all NetworkPolicy.
+#
+# This policy denies ALL ingress and egress for every Pod in the namespace
+# unless explicitly allowed by a more specific policy below.
+#
+# This is the correct starting posture: start closed, then open only what
+# is needed. It is safer than trying to remember everything to close.
+#
+# Without this policy, any Pod can reach any other Pod in the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector: {}  # Matches ALL Pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress or egress rules = deny everything
+
+---
+# Allow the ingress controller to reach the application.
+#
+# The ingress-nginx controller runs in the ingress-nginx namespace.
+# This policy allows traffic from that namespace to our application Pods
+# on port 8000.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-controller
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+spec:
+  podSelector:
+    matchLabels:
+      app: secure-pipeline-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+
+---
+# Allow application Pods to make outbound HTTPS calls.
+#
+# The application may need to call external APIs or reach Kubernetes services
+# (e.g. Secrets Store CSI Driver). Allow egress on port 443 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-https
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+spec:
+  podSelector:
+    matchLabels:
+      app: secure-pipeline-api
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# Allow DNS resolution (UDP port 53 to CoreDNS).
+#
+# Without this, the application cannot resolve hostnames — even internal
+# Kubernetes service names. Must be explicitly allowed when default-deny is active.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-dns
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+spec:
+  podSelector:
+    matchLabels:
+      app: secure-pipeline-api
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

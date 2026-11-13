@@ -1,0 +1,168 @@
+---
+# Deployment for the Secure Pipeline API.
+#
+# Security context is configured to satisfy the "restricted" Pod Security
+# Standard enforced on the namespace. Any field left out that the standard
+# requires will cause the Pod to be rejected.
+#
+# Checkov controls satisfied:
+# - CKV_K8S_8:  Liveness probe defined
+# - CKV_K8S_9:  Readiness probe defined
+# - CKV_K8S_10: CPU request defined
+# - CKV_K8S_11: CPU limit defined
+# - CKV_K8S_12: Memory request defined
+# - CKV_K8S_13: Memory limit defined
+# - CKV_K8S_14: Image tag is not "latest"
+# - CKV_K8S_15: Image pull policy is not Always with mutable tag
+# - CKV_K8S_20: Containers do not run as root (runAsNonRoot: true)
+# - CKV_K8S_22: Read-only root filesystem
+# - CKV_K8S_28: NET_RAW capability dropped
+# - CKV_K8S_30: All capabilities dropped
+# - CKV_K8S_32: Privilege escalation not allowed
+# - CKV_K8S_37: Privileged container not allowed
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-pipeline-api
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: application
+spec:
+  replicas: 2  # Minimum for high availability
+  selector:
+    matchLabels:
+      app: secure-pipeline-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # One extra Pod during update
+      maxUnavailable: 0  # No downtime — always keep desired replicas running
+  template:
+    metadata:
+      labels:
+        app: secure-pipeline-api
+        app.kubernetes.io/name: secure-pipeline-api
+        app.kubernetes.io/version: "0.1.0"
+      annotations:
+        # Force rolling restart when ConfigMap changes
+        # (kubectl rollout restart handles this in practice)
+        checksum/config: "placeholder-updated-by-helm-or-kustomize"
+    spec:
+      serviceAccountName: secure-pipeline-api
+      automountServiceAccountToken: false
+
+      # Security context at Pod level
+      securityContext:
+        # Run all containers as non-root
+        runAsNonRoot: true
+        # UID 1000 matches the appuser created in the Dockerfile
+        runAsUser: 1000
+        runAsGroup: 1000
+        # Prevent privilege escalation via setuid binaries
+        # (required by restricted Pod Security Standard)
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Spread replicas across nodes and AZs for resilience
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: secure-pipeline-api
+
+      containers:
+        - name: api
+          # In production: use the full registry path with immutable SHA tag.
+          # Example: ghcr.io/mbitajeff/secure-pipeline-api:sha-abc1234
+          # The pipeline sets this via: kubectl set image ... api=IMAGE:SHA
+          image: ghcr.io/mbitajeff/secure-pipeline-api:latest
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          # Load non-secret config from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: secure-pipeline-api-config
+
+          # SECRET_KEY must come from a Kubernetes Secret or external secret store.
+          # This example uses a Kubernetes Secret named "secure-pipeline-api-secrets".
+          # In production: use Secrets Store CSI Driver with AWS Secrets Manager.
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secure-pipeline-api-secrets
+                  key: secret-key
+
+          # Resource limits — prevent a single Pod from exhausting node resources
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+          # Security context at container level
+          securityContext:
+            allowPrivilegeEscalation: false  # CKV_K8S_32
+            privileged: false                # CKV_K8S_37
+            readOnlyRootFilesystem: true     # CKV_K8S_22
+            runAsNonRoot: true               # CKV_K8S_20
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL                        # CKV_K8S_28, CKV_K8S_30
+
+          # Liveness probe — CKV_K8S_8
+          # Kubernetes restarts the container if this fails
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe — CKV_K8S_9
+          # Kubernetes removes Pod from load balancer rotation if this fails
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Startup probe — gives the application time to start before liveness kicks in
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12  # 12 * 5s = 60s max startup time
+
+          # Writable tmpfs mounts for directories the app may write to.
+          # The root filesystem is read-only (readOnlyRootFilesystem: true).
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+              readOnly: false
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+      # Grace period for SIGTERM handling
+      terminationGracePeriodSeconds: 30

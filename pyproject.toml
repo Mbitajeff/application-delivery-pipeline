@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=72", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-pipeline-api"
+version = "0.1.0"
+description = "FastAPI application for the DevSecOps secure pipeline project"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.162.5",
+    "uvicorn[standard]==0.54.0",
+    "python-multipart==0.0.33",
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.2",
+    "python-jose[cryptography]==3.5.0",
+    "bcrypt==5.0.0",
+    "structlog==26.1.0",
+    "email-validator==2.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "pytest-cov==7.1.0",
+    "httpx2==2.16.0",
+    "ruff==0.17.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+# Pytest configuration
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# pytest-asyncio 1.4.x configuration key
+asyncio_mode = "auto"
+
+addopts = [
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-report=xml:coverage.xml",
+    "--cov-fail-under=80",
+    "-v",
+    "--tb=short",
+]
+
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    # pytest-asyncio 1.4.x emits a PytestUnraisableExceptionWarning on teardown
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff configuration
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+select = ["E", "W", "F", "I", "B", "C4", "UP", "S", "N"]
+ignore = [
+    "S101",   # assert in tests is correct
+    "S105",   # hardcoded password strings — intentional in fixtures
+    "S106",   # hardcoded password in function call — token_type="bearer" is not a password
+    "S104",   # binding to 0.0.0.0 is intentional for containerised app
+    "B008",   # Depends() in function defaults is the FastAPI idiom; not a bug
+    "B904",   # raise-without-from-cause: HTTP exceptions don't need chaining
+    "UP042",  # StrEnum migration: unsafe fix; str+Enum is fine for Pydantic compat
+]
+
+[tool.ruff.lint]
+# Keep this table for forward compatibility with ruff >= 0.2.0
+select = ["E", "W", "F", "I", "B", "C4", "UP", "S", "N"]
+ignore = [
+    "S101", "S105", "S106", "S104",
+    "B008", "B904",
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/tests/**/*.py" = ["S101", "S105", "S106", "ANN"]

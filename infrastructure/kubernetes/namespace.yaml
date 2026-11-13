@@ -1,0 +1,28 @@
+---
+# Namespace for the secure-pipeline application.
+#
+# Pod Security Standard: "restricted"
+# - Prevents privileged containers
+# - Requires non-root user
+# - Requires read-only root filesystem (or explicit allowance)
+# - Drops all capabilities by default
+# - Disallows privilege escalation
+#
+# Any Pod that violates these constraints will be rejected by the
+# admission controller before it reaches scheduling.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secure-pipeline
+  labels:
+    # Enforce the restricted Pod Security Standard on this namespace.
+    # "enforce" = reject violating Pods
+    # "warn"    = allow but warn (use during migration)
+    # "audit"   = allow but log (use for discovery)
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    # Labels for observability and policy targeting
+    app.kubernetes.io/managed-by: kubectl
+    environment: production

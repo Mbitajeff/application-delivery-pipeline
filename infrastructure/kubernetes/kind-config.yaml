@@ -1,0 +1,23 @@
+# Kind cluster configuration for local development and CI.
+#
+# Two nodes: one control plane, one worker.
+# Ports 80 and 443 are mapped from the host so the ingress
+# controller can receive traffic without NodePort awkwardness.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080    # Map to 8080 to avoid requiring root on host
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+  - role: worker

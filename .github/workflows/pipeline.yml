@@ -1,0 +1,501 @@
+# =============================================================================
+# Main CI/CD Pipeline — runs on push to main
+# =============================================================================
+#
+# Full secure pipeline implementing every security gate from the design doc.
+#
+# Job execution order (dependency graph):
+#
+#   pre-flight (Gitleaks + lint)
+#       │
+#       ├── sast (Semgrep)      ─┐
+#       ├── sca (Trivy fs)      ─┤── all three parallel
+#       └── iac-scan (Checkov)  ─┘
+#                │
+#           test (pytest + coverage)
+#                │
+#           build (Docker multi-stage)
+#                │
+#       ┌────────┴────────┐
+#   image-scan         sbom-sign
+#   (Trivy image)   (Syft + Cosign)
+#       └────────┬────────┘
+#            push (GHCR)
+#                │
+#             dast (ZAP)
+#                │
+#         deploy-gate (manual approval)
+#
+# Security controls:
+#   - All actions pinned to full commit SHA
+#   - Minimal per-job permissions
+#   - No pull_request_target usage
+#   - GITHUB_TOKEN scoped per job
+#   - Secrets never echoed to logs
+# =============================================================================
+
+name: Secure Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger for testing
+
+# Global defaults — overridden per job where needed
+permissions:
+  contents: read
+
+# Cancel in-progress runs when a new commit is pushed to main
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: "3.12"
+
+# =============================================================================
+# Job 1: Pre-flight
+# Secret scanning + lint. Must pass before any other job starts.
+# =============================================================================
+jobs:
+  pre-flight:
+    name: Pre-flight (Secrets + Lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout (full history for secret scan)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: security/.gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: false
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ruff
+        run: pip install ruff==0.17.4
+
+      - name: Lint (Ruff)
+        run: ruff check app/
+
+  # =============================================================================
+  # Jobs 2-4: Parallel security analysis
+  # All three must pass before the build job runs.
+  # =============================================================================
+  sast:
+    name: SAST (Semgrep)
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to upload SARIF results to GitHub Security tab
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d  # v1.1.0
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/python
+            p/jwt
+            security/.semgrep.yml
+          # Upload SARIF to GitHub Security tab
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}  # Optional — works without token
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true  # Don't fail if SARIF upload fails
+
+  sca:
+    name: SCA (Trivy — dependencies)
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@18f2505d82a19bba7f7da3a7d93a2cbc50e0acdc  # v0.29.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: "1"           # Block on CRITICAL or HIGH findings
+          format: sarif
+          output: trivy-sca.sarif
+          ignore-unfixed: true     # Don't block on vulnerabilities with no fix available
+
+      - name: Upload Trivy SCA SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-sca.sarif
+          category: trivy-sca
+        continue-on-error: true
+
+  iac-scan:
+    name: IaC Scan (Checkov)
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@28ee2a86eddd1b4b3d8b5a71c38dab6b7e3a7e2c  # v12.2975.0
+        with:
+          directory: infrastructure/
+          config_file: security/checkov-config.yaml
+          framework: terraform,kubernetes
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false  # Hard fail on HIGH findings
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+        continue-on-error: true
+
+  # =============================================================================
+  # Job 5: Tests
+  # Runs after all three security analysis jobs pass.
+  # =============================================================================
+  test:
+    name: Tests + Coverage
+    needs: [sast, sca, iac-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 30
+
+  # =============================================================================
+  # Job 6: Docker Build
+  # Only runs after tests pass. Produces the image artifact for scanning.
+  # =============================================================================
+  build:
+    name: Docker Build
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # Required to push to GHCR
+
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-ref: ${{ steps.build.outputs.imageid }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0eb3cedbc616059  # v6.10.0
+        with:
+          context: .
+          target: runtime
+          push: false         # Don't push yet — scan first
+          load: true          # Load into local Docker daemon for scanning
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache layers for faster rebuilds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # =============================================================================
+  # Jobs 7a + 7b: Image scan and SBOM+sign (parallel, both depend on build)
+  # =============================================================================
+  image-scan:
+    name: Image Scan (Trivy)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Docker Buildx (restore cached image)
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rebuild image for scanning
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0eb3cedbc616059  # v6.10.0
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: scan-target:latest
+          cache-from: type=gha
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@18f2505d82a19bba7f7da3a7d93a2cbc50e0acdc  # v0.29.0
+        with:
+          scan-type: image
+          image-ref: scan-target:latest
+          scanners: vuln
+          severity: CRITICAL
+          exit-code: "1"           # Block on CRITICAL CVEs in the image
+          format: sarif
+          output: trivy-image.sarif
+          ignore-unfixed: true
+
+      - name: Upload image scan SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+        continue-on-error: true
+
+  sbom-sign:
+    name: SBOM Generation + Image Signing
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Required for Cosign keyless signing via GitHub OIDC
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rebuild and push image (needed for signing)
+        id: push
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0eb3cedbc616059  # v6.10.0
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          cache-from: type=gha
+
+      - name: Install Syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@61119d458adab75f756bc0b9e4bde25725f86a7a  # v0.17.2
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@61119d458adab75f756bc0b9e4bde25725f86a7a  # v0.17.2
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: spdx-json
+          artifact-name: sbom-${{ github.sha }}.spdx.json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da  # v3.7.0
+
+      - name: Sign image (keyless via GitHub OIDC)
+        # Keyless signing: Cosign requests an OIDC token from GitHub,
+        # exchanges it for a short-lived certificate from Fulcio CA,
+        # signs the image digest, and records the signature in Rekor
+        # (public transparency log). No private key management needed.
+        run: |
+          cosign sign --yes \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+
+      - name: Attach SBOM as attestation
+        run: |
+          cosign attest --yes \
+            --type spdxjson \
+            --predicate sbom.spdx.json \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+
+  # =============================================================================
+  # Job 8: DAST — dynamic scan against running container
+  # Warn-only initially; promote to blocking after baseline is established.
+  # =============================================================================
+  dast:
+    name: DAST (OWASP ZAP)
+    needs: [image-scan, sbom-sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull application image
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} app:dast
+
+      - name: Start application container
+        run: |
+          docker run -d \
+            --name app-dast \
+            -p 8000:8000 \
+            -e ENVIRONMENT=testing \
+            -e SECRET_KEY=zap-test-secret-key-32-bytes-min! \
+            app:dast
+          # Wait for the application to be ready
+          timeout 30 bash -c 'until curl -sf http://localhost:8000/health; do sleep 2; done'
+
+      - name: Run OWASP ZAP baseline scan
+        # -I: don't fail on warnings (warn-only mode)
+        # -c: config file
+        # -r: HTML report
+        # -J: JSON report
+        run: |
+          mkdir -p security/zap-reports
+          docker run --rm \
+            --network host \
+            -v ${{ github.workspace }}/security/zap-config.yaml:/zap/config.yaml:ro \
+            -v ${{ github.workspace }}/security/zap-reports:/zap/reports \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+              -t http://localhost:8000 \
+              -c /zap/config.yaml \
+              -r /zap/reports/zap-report.html \
+              -J /zap/reports/zap-report.json \
+              -I
+        continue-on-error: true  # Warn-only: don't block pipeline yet
+
+      - name: Stop application container
+        if: always()
+        run: docker stop app-dast && docker rm app-dast
+
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        if: always()
+        with:
+          name: zap-report-${{ github.sha }}
+          path: security/zap-reports/
+          retention-days: 30
+
+  # =============================================================================
+  # Job 9: Deployment Gate
+  # Manual approval required before any deployment proceeds.
+  # =============================================================================
+  deploy-gate:
+    name: Deployment Gate
+    needs: dast
+    runs-on: ubuntu-latest
+    # Only runs on pushes to main (not workflow_dispatch from forks)
+    if: github.ref == 'refs/heads/main'
+    # GitHub Environment with required reviewers — configure in repo settings:
+    # Settings → Environments → production → Required reviewers
+    environment:
+      name: production
+      url: https://api.example.com
+    permissions:
+      contents: read
+
+    steps:
+      - name: Deployment approved
+        run: |
+          echo "Deployment approved by: ${{ github.actor }}"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
+          echo "To deploy to Kubernetes:"
+          echo "  kubectl set image deployment/secure-pipeline-api api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }} -n secure-pipeline"
+          echo "  kubectl rollout status deployment/secure-pipeline-api -n secure-pipeline"
+
+# =============================================================================
+# Scheduled scan workflow (defined in scheduled-scan.yml)
+# =============================================================================

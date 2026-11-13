@@ -1,0 +1,40 @@
+# =============================================================================
+# docker-compose.test.yml — CI pipeline DAST target environment
+# =============================================================================
+#
+# Used by the GitHub Actions pipeline DAST stage to spin up the application
+# as a service that OWASP ZAP can scan.
+#
+# Usage in CI (GitHub Actions services block handles this automatically):
+#   docker compose -f docker-compose.test.yml up -d
+#   # run ZAP scan against http://localhost:8000
+#   docker compose -f docker-compose.test.yml down
+#
+# Key differences from docker-compose.yml:
+#   - Uses the already-built and pushed GHCR image (not a local build)
+#   - Deterministic SECRET_KEY so ZAP can test authenticated endpoints
+#   - No restart policy — disposable CI environment
+# =============================================================================
+
+services:
+  app:
+    # In CI this is replaced with the actual image pushed by the build job:
+    # image: ghcr.io/${GITHUB_REPOSITORY}:${GITHUB_SHA}
+    image: secure-pipeline-api:${IMAGE_TAG:-dev}
+    container_name: secure-pipeline-api-test
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: testing
+      # Fixed test secret — ZAP authenticated scan uses this to generate tokens.
+      # This value is only used in the disposable CI container, not in production.
+      SECRET_KEY: "zap-test-secret-key-32-bytes-min!"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      DEBUG: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

@@ -1,0 +1,38 @@
+# Semgrep configuration for SAST scanning.
+# Runs the OWASP Top 10 and security-audit rule packs against the application.
+#
+# Rule packs used:
+# - p/owasp-top-ten     : OWASP Top 10 vulnerabilities
+# - p/python            : Python-specific security issues
+# - p/secrets           : Hardcoded secrets (complements Gitleaks)
+# - p/jwt               : JWT implementation weaknesses
+#
+# Custom rules below catch FastAPI-specific patterns.
+
+rules:
+  # Detect use of a hardcoded JWT secret (not read from environment)
+  - id: hardcoded-jwt-secret
+    patterns:
+      - pattern: jwt.encode(..., "$SECRET", ...)
+      - pattern-not: jwt.encode(..., $ENV_VAR, ...)
+    message: "JWT secret appears hardcoded. Read it from environment variables."
+    languages: [python]
+    severity: ERROR
+
+  # Detect unvalidated redirect in FastAPI
+  - id: fastapi-open-redirect
+    pattern: |
+      from fastapi.responses import RedirectResponse
+      ...
+      RedirectResponse(url=request.query_params["url"])
+    message: "Potential open redirect — validate the redirect URL against an allowlist."
+    languages: [python]
+    severity: WARNING
+
+  # Detect debug=True being set from a non-environment source
+  - id: hardcoded-debug-true
+    pattern: |
+      FastAPI(..., debug=True, ...)
+    message: "debug=True is hardcoded. Use an environment variable."
+    languages: [python]
+    severity: WARNING

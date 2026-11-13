@@ -1,0 +1,25 @@
+# Gitleaks configuration
+# https://github.com/zricethezav/gitleaks
+
+title = "Secure Pipeline Gitleaks Config"
+
+[extend]
+# Use the default ruleset as a base
+useDefault = true
+
+[allowlist]
+description = "Allowlist for intentional test values"
+# Allowlist the intentional weak secret_key in config.py — it's
+# documented as intentional to trigger SAST, not a real credential.
+regexes = [
+    "CHANGE_ME_IN_PRODUCTION_USE_32_BYTES_MINIMUM",
+    "dev-only-secret-key-not-for-production-use",
+    "zap-test-secret-key-32-bytes-min",
+    "test-secret-key-32-bytes-minimum",
+]
+paths = [
+    "app/core/config.py",
+    "docker-compose.yml",
+    "docker-compose.test.yml",
+    "app/tests/conftest.py",
+]

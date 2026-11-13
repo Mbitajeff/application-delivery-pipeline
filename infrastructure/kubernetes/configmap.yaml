@@ -1,0 +1,25 @@
+---
+# Non-secret application configuration.
+#
+# Secrets (SECRET_KEY, database credentials) are NOT here.
+# They must come from an external secret store (AWS Secrets Manager,
+# Vault) mounted via the Secrets Store CSI Driver, or from Kubernetes
+# Secrets encrypted at rest via etcd encryption.
+#
+# This ConfigMap holds only non-sensitive runtime configuration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secure-pipeline-api-config
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+    app.kubernetes.io/component: configuration
+data:
+  ENVIRONMENT: "production"
+  PORT: "8000"
+  HOST: "0.0.0.0"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+  DEBUG: "false"
+  # CORS origins — update with real frontend domain in production
+  ALLOWED_ORIGINS: '["https://app.example.com"]'

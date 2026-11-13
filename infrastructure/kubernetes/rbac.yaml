@@ -1,0 +1,54 @@
+---
+# ServiceAccount for the application Pod.
+#
+# Pods should not use the default ServiceAccount — it may have
+# accumulated permissions over time and is shared with other workloads.
+# A dedicated ServiceAccount with no permissions by default follows
+# the principle of least privilege.
+#
+# When IRSA (IAM Roles for Service Accounts) is added for AWS access,
+# the annotation eks.amazonaws.com/role-arn is added here — the Pod
+# itself never needs AWS credentials in environment variables.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: secure-pipeline-api
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+    app.kubernetes.io/component: application
+  # Uncomment and set when adding IRSA for AWS EKS:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/secure-pipeline-api-role
+automountServiceAccountToken: false  # Explicitly opt out — this Pod needs no K8s API access
+
+---
+# Role: minimal permissions for the application.
+# Currently empty — the application does not interact with the Kubernetes API.
+# Add rules here only when a specific need is identified, documented, and reviewed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secure-pipeline-api
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+rules: []  # No K8s API permissions needed — application is self-contained
+
+---
+# RoleBinding: bind the Role to the ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: secure-pipeline-api
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: secure-pipeline-api
+subjects:
+  - kind: ServiceAccount
+    name: secure-pipeline-api
+    namespace: secure-pipeline

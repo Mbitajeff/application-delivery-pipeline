@@ -1,0 +1,16 @@
+# Production dependencies — pinned to versions verified against Python 3.14.
+# Install with: pip install -e ".[dev]" from the workspace root.
+#
+# Version history: updated Nov 2026 to match Python 3.14 environment.
+# passlib removed — replaced with direct bcrypt API (passlib 1.7.4 is
+# incompatible with bcrypt >= 4.0, and passlib is unmaintained since 2020).
+
+fastapi==0.162.5
+uvicorn[standard]==0.54.0
+python-multipart==0.0.33
+pydantic==2.14.3
+pydantic-settings==2.16.2
+python-jose[cryptography]==3.5.0
+bcrypt==5.0.0
+structlog==26.1.0
+email-validator==2.3.0

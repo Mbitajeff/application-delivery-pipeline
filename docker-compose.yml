@@ -1,0 +1,47 @@
+# =============================================================================
+# docker-compose.yml — local development environment
+# =============================================================================
+#
+# Usage:
+#   docker compose up           # start the application
+#   docker compose up --build   # rebuild image first
+#   docker compose down         # stop and remove containers
+#
+# This file is for local development only.
+# Production deployment uses Kubernetes manifests in infrastructure/kubernetes/.
+# =============================================================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Build the runtime stage only (not builder)
+      target: runtime
+    image: secure-pipeline-api:dev
+    container_name: secure-pipeline-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Development overrides — never use these values in production
+      ENVIRONMENT: development
+      SECRET_KEY: "dev-only-secret-key-not-for-production-use"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      DEBUG: "true"
+    # Health check aligned with Dockerfile HEALTHCHECK
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Read-only root filesystem — validates the application runs without writes.
+    # tmpfs mounts provide writable space only where explicitly needed.
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Security options — mirrors what Kubernetes will enforce
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

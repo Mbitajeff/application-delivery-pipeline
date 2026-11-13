@@ -1,0 +1,88 @@
+# =============================================================================
+# .dockerignore — controls what the Docker build context includes
+# =============================================================================
+#
+# Purpose: prevent files from leaking into the image that:
+#   1. Contain secrets (.env, credentials)
+#   2. Increase image size unnecessarily (tests, docs, CI config)
+#   3. Expose internal project structure to the runtime container
+#   4. Produce non-deterministic builds (cached/compiled artifacts)
+#
+# Rule: start by excluding everything, then explicitly allow what's needed.
+# This is safer than trying to exclude individual sensitive files.
+# =============================================================================
+
+# Exclude everything by default
+*
+
+# Allow the application source (the only thing the Dockerfile COPYs)
+!app/
+!app/**
+
+# Allow the requirements file (copied explicitly in Dockerfile)
+!app/requirements.txt
+
+# Re-exclude test code — never in the production image
+app/tests/
+app/tests/**
+app/**/__pycache__/
+app/**/*.pyc
+app/**/*.pyo
+app/**/*.pyd
+
+# Development dependencies — not in production image
+app/requirements-dev.txt
+app/pytest.ini
+
+# Environment files — may contain secrets
+.env
+.env.*
+*.env
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD configuration
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Infrastructure — not application code
+infrastructure/
+security/
+docs/
+
+# Build artifacts and caches
+*.egg-info/
+dist/
+build/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+coverage.xml
+.coverage
+*.pyc
+*.pyo
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docker files themselves (reduce context size, not needed inside image)
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose*.yml
+
+# Project configuration (not needed at runtime)
+pyproject.toml
+Makefile
+README.md

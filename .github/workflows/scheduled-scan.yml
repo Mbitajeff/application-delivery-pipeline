@@ -1,0 +1,87 @@
+# =============================================================================
+# Scheduled Scan — weekly rescan of published images
+# =============================================================================
+#
+# Rationale: A container image that passed all scans on Monday may have new
+# CVEs disclosed by Wednesday. The build pipeline only scans images at build
+# time. This workflow rescans the latest published image weekly so that new
+# vulnerabilities are detected even without a new deployment.
+#
+# This is the "Shift Right" security principle: continue security monitoring
+# after release, not just before it.
+# =============================================================================
+
+name: Scheduled Security Scan
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
+  workflow_dispatch:       # Allow manual trigger
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  rescan-image:
+    name: Rescan Published Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy image rescan
+        uses: aquasecurity/trivy-action@18f2505d82a19bba7f7da3a7d93a2cbc50e0acdc  # v0.29.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          exit-code: "0"           # Don't block — alert only
+          format: sarif
+          output: trivy-scheduled.sarif
+          ignore-unfixed: false    # Include all findings including unfixed
+
+      - name: Upload to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-scheduled.sarif
+          category: trivy-scheduled-rescan
+        continue-on-error: true
+
+  rescan-dependencies:
+    name: Rescan Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Trivy dependency rescan
+        uses: aquasecurity/trivy-action@18f2505d82a19bba7f7da3a7d93a2cbc50e0acdc  # v0.29.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+          format: sarif
+          output: trivy-deps-scheduled.sarif
+          ignore-unfixed: false
+
+      - name: Upload to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps-scheduled.sarif
+          category: trivy-scheduled-deps
+        continue-on-error: true

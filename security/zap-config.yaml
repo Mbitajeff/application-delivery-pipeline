@@ -1,0 +1,52 @@
+# OWASP ZAP baseline scan configuration.
+#
+# The baseline scan is a passive scan — it does not perform active attacks.
+# It finds common misconfigurations, missing security headers, and information
+# disclosure without sending malicious payloads.
+#
+# To promote to an active scan (Phase 6 enhancement):
+# - Change zap-baseline.py to zap-full-scan.py in the pipeline
+# - Add authentication config (see ARCHITECTURE.md authenticated scan guide)
+# - Set appropriate -l FAIL threshold
+
+# Rules configuration
+# Severity levels: IGNORE | INFO | WARN | FAIL
+# FAIL = gate blocks the pipeline (not yet — Phase 1 baseline is warn-only)
+
+rules:
+  # Missing security headers — warn for now, promote to FAIL after baseline
+  - id: 10035  # Strict-Transport-Security header missing
+    threshold: WARN
+  - id: 10036  # Server leaks version information
+    threshold: WARN
+  - id: 10037  # Server leaks information via "X-Powered-By"
+    threshold: WARN
+  - id: 10038  # Content Security Policy not set
+    threshold: WARN
+  - id: 10063  # Permissions Policy header not set
+    threshold: WARN
+  - id: 10021  # X-Content-Type-Options header missing
+    threshold: WARN
+  - id: 10020  # X-Frame-Options header missing
+    threshold: WARN
+
+  # Information disclosure
+  - id: 10027  # Information disclosure — suspicious comments
+    threshold: WARN
+  - id: 10024  # Information disclosure — sensitive information in URL
+    threshold: WARN
+
+  # Authentication issues
+  - id: 10105  # Weak authentication method
+    threshold: WARN
+
+# Scan context
+context:
+  # URLs to include in the scan
+  include:
+    - "http://localhost:8000.*"
+  # URLs to exclude (avoid scanning the OpenAPI spec itself)
+  exclude:
+    - "http://localhost:8000/openapi.json"
+    - "http://localhost:8000/docs.*"
+    - "http://localhost:8000/redoc.*"

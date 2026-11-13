@@ -1,0 +1,59 @@
+---
+# Ingress — HTTP(S) routing into the cluster.
+#
+# Uses the nginx ingress controller, which is the standard for Kind clusters
+# and common in production (AWS ALB Ingress Controller is the EKS alternative).
+#
+# Security annotations:
+# - force-ssl-redirect: HTTP → HTTPS redirect at the ingress level
+# - ssl-protocols: disable TLS 1.0 and 1.1 (deprecated)
+# - hsts: HTTP Strict Transport Security header
+# - content-type-options: prevent MIME sniffing
+# - frame-options: prevent clickjacking
+# - xss-protection: legacy XSS filter header
+#
+# TLS: cert-manager with Let's Encrypt issues and auto-renews the certificate.
+# For local Kind testing: TLS annotation is commented out (no cert-manager in Kind).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: secure-pipeline-api
+  namespace: secure-pipeline
+  labels:
+    app.kubernetes.io/name: secure-pipeline-api
+  annotations:
+    # Ingress class
+    kubernetes.io/ingress.class: "nginx"
+    # TLS
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Content-Security-Policy: default-src 'self'";
+    # Rate limiting — prevents brute force and scraping
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    # cert-manager — uncomment when cert-manager is installed
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  # TLS — uncomment when cert-manager is configured
+  # tls:
+  #   - hosts:
+  #       - api.example.com
+  #     secretName: secure-pipeline-api-tls
+  rules:
+    - host: api.example.com  # Replace with actual domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: secure-pipeline-api
+                port:
+                  name: http

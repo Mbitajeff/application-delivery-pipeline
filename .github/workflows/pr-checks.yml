@@ -1,0 +1,124 @@
+# =============================================================================
+# PR Checks — fast feedback on every pull request
+# =============================================================================
+#
+# Runs on every pull request. Designed to complete in < 3 minutes.
+# Does NOT build Docker images or run DAST — those run on main only.
+#
+# Gates:
+#   - Secret scanning (Gitleaks)    — blocks merge if secrets found
+#   - Linting (Ruff)                — blocks merge on lint failures
+#   - Tests with coverage           — blocks merge if < 80% or test fails
+#
+# Security:
+#   - Minimal GITHUB_TOKEN permissions (read-only by default)
+#   - All actions pinned to full commit SHA — not mutable tags
+#   - pull_request trigger (not pull_request_target) — no access to secrets
+# =============================================================================
+
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+    # Only run when these paths change — skip for docs-only PRs
+    paths:
+      - "app/**"
+      - "infrastructure/**"
+      - "security/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/**"
+
+# Minimal permissions — read-only unless a job specifies more
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same PR when new commits are pushed
+concurrency:
+  group: pr-checks-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Secret scanning — must pass before anything else
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0  # Full history for complete secret scan
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: security/.gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: false  # Don't post PR comments (noise)
+
+  # ---------------------------------------------------------------------------
+  # Lint — fast static analysis
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (Ruff)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Ruff
+        run: pip install ruff==0.17.4
+
+      - name: Run Ruff
+        run: ruff check app/
+
+  # ---------------------------------------------------------------------------
+  # Tests — full suite with coverage gate
+  # ---------------------------------------------------------------------------
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        python-version: ["3.12"]  # Add "3.13" when available on runners
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests with coverage
+        run: python -m pytest
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        if: always()  # Upload even if tests fail — useful for debugging
+        with:
+          name: coverage-report-${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 7
