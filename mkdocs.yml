@@ -1,0 +1,40 @@
+site_name: Secure Pipeline API
+site_description: A production-grade DevSecOps CI/CD pipeline — FastAPI + GitHub Actions + 8 security gates
+site_url: https://mbitajeff.github.io/application-delivery-pipeline
+repo_url: https://github.com/Mbitajeff/application-delivery-pipeline
+repo_name: Mbitajeff/application-delivery-pipeline
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Pipeline:
+      - Overview: pipeline.md
+      - Architecture: architecture.md
+  - Security:
+      - Threat Model: threat-model.md
+      - Vulnerability Remediation: remediation.md
+  - Cloud Extension: cloud-extension.md
+  - Runbook: runbook.md
+
+docs_dir: site-docs
