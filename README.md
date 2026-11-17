@@ -129,6 +129,10 @@ flowchart LR
 
 **Dashboard:** [`monitoring/grafana/secure-pipeline-api.json`](monitoring/grafana/secure-pipeline-api.json)
 
+![Grafana dashboard: overview and traffic](docs/images/grafana-dashboard-overview.png)
+
+![Grafana dashboard: latency, security and runtime](docs/images/grafana-dashboard-latency-security.png)
+
 | Section | Panels |
 |---------|--------|
 | Overview | Requests/sec, 5xx error rate, p95 latency, memory (RSS) |
@@ -241,7 +245,8 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 │   ├── ARCHITECTURE.md
 │   ├── PIPELINE.md
 │   ├── CLOUD_EXTENSION.md
-│   └── RUNBOOK.md
+│   ├── RUNBOOK.md
+│   └── images/               README screenshots
 │
 ├── Dockerfile                Multi-stage, non-root, read-only FS
 ├── docker-compose.yml        Local development
