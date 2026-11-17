@@ -12,16 +12,17 @@ Application structure:
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+# Prometheus metrics — exposes /metrics endpoint for Grafana/Prometheus scraping
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.routes import auth, health, items
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-
-# Prometheus metrics — exposes /metrics endpoint for Grafana/Prometheus scraping
-from prometheus_fastapi_instrumentator import Instrumentator
+from app.core.metrics_auth import require_metrics_token
 
 
 @asynccontextmanager
@@ -91,8 +92,13 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=api_v1_prefix)
     app.include_router(items.router, prefix=api_v1_prefix)
 
-    # Expose /metrics for Prometheus scraping
-    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+    # Expose /metrics for Prometheus scraping — bearer token required
+    Instrumentator().instrument(app).expose(
+        app,
+        endpoint="/metrics",
+        include_in_schema=False,
+        dependencies=[Depends(require_metrics_token)],
+    )
 
     # Global exception handlers
     @app.exception_handler(Exception)

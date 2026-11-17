@@ -8,6 +8,7 @@ local development but must be overridden in any real deployment.
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,11 @@ class Settings(BaseSettings):
     secret_key: str = "CHANGE_ME_IN_PRODUCTION_USE_32_BYTES_MINIMUM"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+
+    # Metrics — bearer token required to read /metrics (e.g. Grafana Cloud
+    # scrape job). Set via METRICS_TOKEN env var. If unset, /metrics is
+    # closed to everyone (fail-closed).
+    metrics_token: SecretStr | None = None
 
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
