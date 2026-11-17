@@ -9,37 +9,37 @@ Security is built into every stage — not bolted on at the end.
 
 ```mermaid
 flowchart TD
-    DEV(["👨‍💻 Developer\nPush to main"])
+    DEV(["Developer\nPush to main"])
 
-    subgraph PREFLIGHT ["🔍 Pre-flight"]
-        GL["🔑 Gitleaks\nSecret Scanning"]
-        RUFF["✅ Ruff · Lint"]
+    subgraph PREFLIGHT ["Pre-flight"]
+        GL["Gitleaks\nSecret Scanning"]
+        RUFF["Ruff\nLint"]
     end
 
-    subgraph PARALLEL ["⚡ Parallel Security Analysis"]
-        SAST["🛡️ Semgrep\nSAST · OWASP Top 10"]
-        SCA["📦 Trivy\nDependency CVEs"]
-        IAC["🏗️ Checkov\nTerraform + Kubernetes"]
+    subgraph PARALLEL ["Parallel Security Analysis"]
+        SAST["Semgrep\nSAST · OWASP Top 10"]
+        SCA["Trivy\nDependency CVEs"]
+        IAC["Checkov\nTerraform + Kubernetes"]
     end
 
-    subgraph QUALITY ["🧪 Quality Gate"]
+    subgraph QUALITY ["Quality Gate"]
         PYTEST["pytest\n93 tests · 97.5% coverage"]
     end
 
-    subgraph CONTAINER ["🐳 Container Pipeline"]
+    subgraph CONTAINER ["Container Pipeline"]
         DOCKER["Docker\nMulti-stage Build"]
-        ISCAN["🔬 Trivy\nImage CVE Scan"]
-        SBOM["📋 Syft · SBOM"]
-        SIGN["✍️ Cosign\nKeyless Signing · Sigstore"]
+        ISCAN["Trivy\nImage CVE Scan"]
+        SBOM["Syft\nSBOM Generation"]
+        SIGN["Cosign\nKeyless Signing · Sigstore"]
     end
 
-    REGISTRY(["📦 GHCR\nSigned Image + SBOM"])
+    REGISTRY(["GHCR\nSigned Image + SBOM"])
 
-    subgraph RUNTIME ["🌐 Runtime Testing"]
-        ZAP["🕷️ OWASP ZAP\nDAST Baseline Scan"]
+    subgraph RUNTIME ["Runtime Testing"]
+        ZAP["OWASP ZAP\nDAST Baseline Scan"]
     end
 
-    GATE(["🚦 Manual Approval\nDeployment Gate"])
+    GATE(["Manual Approval\nDeployment Gate"])
 
     DEV --> PREFLIGHT
     PREFLIGHT --> PARALLEL
@@ -82,7 +82,7 @@ flowchart LR
         RBAC["RBAC\nleast-privilege"]
     end
 
-    B1 -->|"git push\nHTTPS/SSH"| B2
+    B1 -->|"git push"| B2
     B2 -->|"OIDC token\nauthenticated push"| B3
     B3 -->|"signature verified\nbefore admission"| B4
 ```
@@ -93,14 +93,14 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    S1["🔑 SEC-01\nGitleaks\nSecret Scan\nBLOCKS"]
-    S2["🛡️ SEC-02\nSemgrep\nSAST\nBLOCKS High"]
-    S3["📦 SEC-03\nTrivy SCA\nDep CVEs\nBLOCKS Crit/High"]
-    S4["🏗️ SEC-04\nCheckov\nIaC Scan\nBLOCKS High"]
-    S5["🐳 SEC-05\nTrivy Image\nCVE Scan\nBLOCKS Critical"]
-    S6["📋 SEC-06\nSyft\nSBOM\nArtifact"]
-    S7["✍️ SEC-07\nCosign\nSigning\nArtifact"]
-    S8["🕷️ SEC-08\nOWASP ZAP\nDAST\nWARN"]
+    S1["SEC-01\nGitleaks\nSecret Scan\nBLOCKS"]
+    S2["SEC-02\nSemgrep\nSAST\nBLOCKS High"]
+    S3["SEC-03\nTrivy SCA\nDep CVEs\nBLOCKS Crit/High"]
+    S4["SEC-04\nCheckov\nIaC Scan\nBLOCKS High"]
+    S5["SEC-05\nTrivy Image\nCVE Scan\nBLOCKS Critical"]
+    S6["SEC-06\nSyft\nSBOM\nArtifact"]
+    S7["SEC-07\nCosign\nSigning\nArtifact"]
+    S8["SEC-08\nOWASP ZAP\nDAST\nWARN"]
 
     S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8
 ```
