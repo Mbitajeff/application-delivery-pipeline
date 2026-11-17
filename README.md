@@ -107,6 +107,62 @@ flowchart LR
 
 ---
 
+## Monitoring and Dashboards
+
+The deployed API exposes Prometheus metrics at `/metrics`. Grafana Cloud scrapes them every 30 seconds, and a dashboard-as-code export lives in the repo.
+
+```mermaid
+flowchart LR
+    APP["FastAPI app\n(Render)\n/metrics"]
+    AUTH{"Bearer token\nMETRICS_TOKEN"}
+    SCRAPE["Grafana Cloud\nMetrics Endpoint\nscrape job (30s)"]
+    PROM[("Grafana Cloud\nPrometheus")]
+    DASH["Dashboard\nSecure Pipeline API"]
+    DENY["401\nNot authenticated"]
+
+    SCRAPE -->|"Authorization: Bearer ..."| AUTH
+    AUTH -->|valid| APP
+    AUTH -->|missing / wrong| DENY
+    APP -->|metrics| SCRAPE
+    SCRAPE --> PROM --> DASH
+```
+
+**Dashboard:** [`monitoring/grafana/secure-pipeline-api.json`](monitoring/grafana/secure-pipeline-api.json)
+
+| Section | Panels |
+|---------|--------|
+| Overview | Requests/sec, 5xx error rate, p95 latency, memory (RSS) |
+| Traffic | Requests/sec by route, requests/sec by status class |
+| Latency | p50 / p95 / p99 across all routes, average latency per route |
+| Security and runtime | 4xx responses by route, rejected `/metrics` scrapes, CPU and memory |
+
+Traffic panels exclude the scraper's own `/metrics` requests, so they show real API usage only. The memory tile turns orange at 400 MiB and red at 480 MiB (Render free tier limit: 512 MB).
+
+### Securing `/metrics`
+
+`/metrics` exposes route names, traffic volumes and runtime details, so it is not public:
+
+- Requests must send `Authorization: Bearer <METRICS_TOKEN>` (constant-time comparison)
+- **Fail-closed:** if `METRICS_TOKEN` is unset, every request gets `401`
+- Excluded from the OpenAPI schema
+- The response format is negotiated from the scraper's `Accept` header (falls back to Prometheus text format `0.0.4`)
+- The dashboard's *Rejected /metrics scrapes* panel records every unauthenticated attempt
+
+### Setup
+
+1. Generate a token and set it as `METRICS_TOKEN` in the hosting environment (Render → Environment). Never commit it.
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+2. In Grafana Cloud: **Connections → Add new connection → Metrics Endpoint**
+   - URL: `https://<your-app>/metrics`
+   - Authentication: **Bearer**, paste the token (without the `Bearer` prefix)
+3. Import the dashboard: **Dashboards → New → Import**, upload `monitoring/grafana/secure-pipeline-api.json`, and select your Grafana Cloud Prometheus data source.
+
+> Grafana Cloud's hosted scraper does not emit the `up` metric. Use `http_requests_total` or `python_info` to check that data is arriving.
+
+---
+
 ## What this project demonstrates
 
 | Capability | Implementation |
@@ -123,7 +179,8 @@ flowchart LR
 | Dynamic testing | OWASP ZAP baseline scan |
 | Infrastructure | Terraform modules (networking + EKS) + Kubernetes manifests |
 | Kubernetes security | NetworkPolicy default-deny, RBAC, Pod Security Standards |
-| Test coverage | pytest, 97%+ coverage, 93 tests |
+| Test coverage | pytest, 97%+ coverage, 101 tests |
+| Observability | Prometheus `/metrics` (token-protected) + Grafana Cloud dashboard as code |
 | Deployment gate | GitHub Environments with manual approval |
 | Scheduled rescanning | Weekly Trivy rescan of published images |
 | Multi-cloud portability | GHCR now; ECR/ACR/GAR with minimal changes |
@@ -157,7 +214,10 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 │   ├── api/                  Route handlers and dependency injection
 │   ├── core/                 Config, JWT security, logging
 │   ├── models/               Pydantic request/response models
-│   └── tests/                Unit + integration tests (93 tests)
+│   └── tests/                Unit + integration tests (101 tests)
+│
+├── monitoring/
+│   └── grafana/              Grafana dashboard (JSON, dashboard as code)
 │
 ├── infrastructure/
 │   ├── terraform/            Terraform modules (networking, EKS)
@@ -221,3 +281,5 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | Image signing | Cosign + Sigstore |
 | DAST | OWASP ZAP |
 | CI/CD | GitHub Actions |
+| Metrics | prometheus-client, prometheus-fastapi-instrumentator |
+| Dashboards | Grafana Cloud (Metrics Endpoint scrape job) |
