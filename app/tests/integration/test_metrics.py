@@ -39,5 +39,31 @@ class TestMetricsAuth:
         assert response.status_code == 200
         assert "http_requests_total" in response.text or "python_gc" in response.text
 
+    def test_classic_text_format_when_scraper_asks_for_it(
+        self, client: TestClient, metrics_token: str
+    ) -> None:
+        response = client.get(
+            "/metrics",
+            headers={
+                "Authorization": f"Bearer {metrics_token}",
+                "Accept": "text/plain;version=0.0.4;q=0.5,*/*;q=0.1",
+            },
+        )
+        assert response.status_code == 200
+        assert "version=0.0.4" in response.headers["content-type"]
+
+    def test_openmetrics_when_scraper_asks_for_it(
+        self, client: TestClient, metrics_token: str
+    ) -> None:
+        response = client.get(
+            "/metrics",
+            headers={
+                "Authorization": f"Bearer {metrics_token}",
+                "Accept": "application/openmetrics-text;version=1.0.0",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/openmetrics-text")
+
     def test_metrics_hidden_from_openapi(self, client: TestClient) -> None:
         assert "/metrics" not in client.get("/openapi.json").json()["paths"]

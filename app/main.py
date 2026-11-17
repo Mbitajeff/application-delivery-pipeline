@@ -14,7 +14,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import REGISTRY
+from prometheus_client.exposition import choose_encoder
 
 # Prometheus metrics — exposes /metrics endpoint for Grafana/Prometheus scraping
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -92,13 +94,22 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=api_v1_prefix)
     app.include_router(items.router, prefix=api_v1_prefix)
 
-    # Expose /metrics for Prometheus scraping — bearer token required
-    Instrumentator().instrument(app).expose(
-        app,
-        endpoint="/metrics",
+    # Record request metrics, and expose them at /metrics (bearer token required).
+    # We serve /metrics ourselves rather than via Instrumentator.expose(): that
+    # helper ignores the scraper's Accept header and always labels the body
+    # "text/plain; version=1.0.0", which many scrapers (Grafana Cloud, Alloy,
+    # older Prometheus) reject. choose_encoder negotiates a format the scraper
+    # supports and falls back to the classic text format (version=0.0.4).
+    Instrumentator().instrument(app)
+
+    @app.get(
+        "/metrics",
         include_in_schema=False,
         dependencies=[Depends(require_metrics_token)],
     )
+    def metrics(request: Request) -> Response:
+        encoder, content_type = choose_encoder(request.headers.get("Accept", ""))
+        return Response(content=encoder(REGISTRY), media_type=content_type)
 
     # Global exception handlers
     @app.exception_handler(Exception)
