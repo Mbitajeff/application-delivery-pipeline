@@ -17,6 +17,7 @@ dependencies = [
     "bcrypt==5.0.0",
     "structlog==26.1.0",
     "email-validator==2.3.0",
+    "prometheus-fastapi-instrumentator==8.1.0",
 ]
 
 [project.optional-dependencies]

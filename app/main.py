@@ -20,6 +20,9 @@ from app.api.routes import auth, health, items
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 
+# Prometheus metrics — exposes /metrics endpoint for Grafana/Prometheus scraping
+from prometheus_fastapi_instrumentator import Instrumentator
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -87,6 +90,9 @@ def create_app() -> FastAPI:
     api_v1_prefix = "/api/v1"
     app.include_router(auth.router, prefix=api_v1_prefix)
     app.include_router(items.router, prefix=api_v1_prefix)
+
+    # Expose /metrics for Prometheus scraping
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
     # Global exception handlers
     @app.exception_handler(Exception)
