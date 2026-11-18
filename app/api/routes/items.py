@@ -21,7 +21,8 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.dependencies import InMemoryStore, get_current_user, get_db
+from app.api.dependencies import InMemoryStore, get_current_user, get_db, get_event_publisher
+from app.aws.events import ItemEventPublisher
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.item import ItemCreate, ItemListResponse, ItemResponse, ItemUpdate
@@ -98,6 +99,7 @@ async def create_item(
     item_data: ItemCreate,
     current_user: UserInDB = Depends(get_current_user),
     db: InMemoryStore = Depends(get_db),
+    events: ItemEventPublisher = Depends(get_event_publisher),
 ) -> ItemResponse:
     """
     Create a new item.
@@ -126,6 +128,8 @@ async def create_item(
         title=item_data.title,
     )
 
+    events.publish("item.created", item_id=item["id"], actor_id=current_user.id)
+
     return _item_dict_to_response(item)
 
 
@@ -140,6 +144,7 @@ async def update_item(
     updates: ItemUpdate,
     current_user: UserInDB = Depends(get_current_user),
     db: InMemoryStore = Depends(get_db),
+    events: ItemEventPublisher = Depends(get_event_publisher),
 ) -> ItemResponse:
     """
     Update an item (PATCH semantics — only provided fields are changed).
@@ -181,6 +186,13 @@ async def update_item(
 
     logger.info("item_updated", item_id=item_id, fields=list(update_data.keys()))
 
+    events.publish(
+        "item.updated",
+        item_id=item_id,
+        actor_id=current_user.id,
+        changed_fields=list(update_data.keys()),
+    )
+
     return _item_dict_to_response(updated)
 
 
@@ -194,6 +206,7 @@ async def delete_item(
     item_id: int,
     current_user: UserInDB = Depends(get_current_user),
     db: InMemoryStore = Depends(get_db),
+    events: ItemEventPublisher = Depends(get_event_publisher),
 ) -> None:
     """
     Delete an item.
@@ -226,3 +239,5 @@ async def delete_item(
     db.delete_item(item_id)
 
     logger.info("item_deleted", item_id=item_id, owner_id=current_user.id)
+
+    events.publish("item.deleted", item_id=item_id, actor_id=current_user.id)

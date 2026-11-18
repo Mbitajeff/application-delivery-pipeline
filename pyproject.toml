@@ -19,6 +19,7 @@ dependencies = [
     "email-validator==2.3.0",
     "prometheus-fastapi-instrumentator==8.1.0",
     "prometheus-client==0.26.0",
+    "boto3==1.44.5",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +47,14 @@ python_functions = ["test_*"]
 # pytest-asyncio 1.4.x configuration key
 asyncio_mode = "auto"
 
+# Tests marked aws_emulator need a running AWS Emulator and are deselected
+# from the default run. Run them with:  python -m pytest app/tests/aws -m aws_emulator --no-cov
+markers = [
+    "aws_emulator: integration tests against a local AWS Emulator (never real AWS)",
+]
+
 addopts = [
+    "-m", "not aws_emulator",
     "--cov=app",
     "--cov-report=term-missing",
     "--cov-report=xml:coverage.xml",
@@ -61,6 +69,14 @@ filterwarnings = [
     "ignore::PendingDeprecationWarning",
     # pytest-asyncio 1.4.x emits a PytestUnraisableExceptionWarning on teardown
     "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+# The emulator suite only runs in its own CI stage (see README), so its
+# modules are left out of the unit-test coverage measurement.
+[tool.coverage.run]
+omit = [
+    "app/tests/aws/conftest.py",
+    "app/tests/aws/test_*.py",
 ]
 
 # ---------------------------------------------------------------------------

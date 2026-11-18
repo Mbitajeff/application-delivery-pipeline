@@ -16,3 +16,5 @@ structlog==26.1.0
 email-validator==2.3.0
 prometheus-fastapi-instrumentator==8.1.0
 prometheus-client==0.26.0
+# AWS SDK: used only when STORAGE_BACKEND / AUDIT_BUCKET / EVENTS_QUEUE_URL are set
+boto3==1.44.5

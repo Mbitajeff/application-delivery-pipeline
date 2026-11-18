@@ -11,12 +11,20 @@ Pattern:
     - require_item_owner: combines auth + ownership check
 """
 
+from functools import lru_cache
+from typing import TYPE_CHECKING
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.aws.events import ItemEventPublisher
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.core.security import TokenError, TokenExpiredError, decode_access_token
 from app.models.user import UserInDB
+
+if TYPE_CHECKING:
+    from app.aws.dynamodb_store import DynamoDBStore
 
 logger = get_logger(__name__)
 
@@ -123,14 +131,40 @@ class InMemoryStore:
 _store = InMemoryStore()
 
 
-def get_db() -> InMemoryStore:
+@lru_cache
+def _get_dynamodb_store(users_table: str, items_table: str) -> "DynamoDBStore":
+    from app.aws.dynamodb_store import DynamoDBStore
+
+    return DynamoDBStore(users_table=users_table, items_table=items_table)
+
+
+def get_db() -> "InMemoryStore | DynamoDBStore":
     """
     Dependency: return the data store.
+
+    STORAGE_BACKEND=memory (default) returns the in-process store;
+    STORAGE_BACKEND=dynamodb returns the DynamoDB-backed store.
 
     In tests this is overridden via app.dependency_overrides to
     provide an isolated store per test.
     """
+    settings = get_settings()
+    if settings.storage_backend == "dynamodb":
+        return _get_dynamodb_store(settings.dynamodb_users_table, settings.dynamodb_items_table)
     return _store
+
+
+def get_event_publisher() -> ItemEventPublisher:
+    """
+    Dependency: return the item event publisher (S3 audit + SQS).
+
+    With neither AUDIT_BUCKET nor EVENTS_QUEUE_URL set, publish() is a no-op.
+    """
+    settings = get_settings()
+    return ItemEventPublisher(
+        audit_bucket=settings.audit_bucket,
+        queue_url=settings.events_queue_url,
+    )
 
 
 # ---------------------------------------------------------------------------

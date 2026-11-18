@@ -107,6 +107,65 @@ flowchart LR
 
 ---
 
+## AWS Emulator integration tests
+
+The app has optional AWS code paths, all **off by default** (the default is still the in-memory store with no AWS calls):
+
+| Setting | Effect |
+|---------|--------|
+| `STORAGE_BACKEND=dynamodb` | Users and items are stored in DynamoDB (`DYNAMODB_USERS_TABLE`, `DYNAMODB_ITEMS_TABLE`) |
+| `AUDIT_BUCKET=<bucket>` | Every item create/update/delete writes an SSE-encrypted JSON audit record to S3 |
+| `EVENTS_QUEUE_URL=<url>` | Every item create/update/delete sends an event to SQS |
+
+Audit records and events contain ids, the event type, a timestamp and the names of changed fields only. Item titles and descriptions are never copied to S3 or SQS. If an audit write or event send fails, the request fails (fail closed).
+
+These paths are tested against [AWS Emulator](https://docs.aws.amazon.com/emulator/latest/userguide/what-is-service.html), AWS's free local emulator, so CI needs **no AWS account, no AWS credentials and no AWS spend**.
+
+### What the CI stage does
+
+The `aws-emulator-tests` job runs in `pr-checks.yml` (on PRs) and in `pipeline.yml` (after pre-flight, in parallel with SAST/SCA/IaC). It runs **alongside** the 8 security gates: no gate was removed, changed or reordered, and no existing job depends on it.
+
+1. Downloads the official `.deb` from `downloads.aws.com` and **refuses to install** unless its GPG signature verifies against the AWS publishing key fingerprint documented by AWS (`scripts/aws-emulator/install-verified.sh`).
+2. Fails if `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` or `AWS_PROFILE` is set. The job references no secrets.
+3. Starts the emulator in the background with telemetry off (`--telemetry off` and `EMULATOR_TELEMETRY=off`) and waits for `https://127.0.0.1:9297/__admin/health`, trusting the generated CA at `~/.aws/emulator/9297/ca.pem` (`scripts/aws-emulator/start.sh`).
+4. Points the SDK at it: `AWS_ENDPOINT_URL=https://127.0.0.1:9297`, the generated `config` and `emulator_credentials` files, `AWS_CA_BUNDLE`, `AWS_REGION`/`AWS_DEFAULT_REGION=us-east-1`, `AWS_EC2_METADATA_DISABLED=true`, `AWS_DISABLE_HOST_PREFIX_INJECTION=true`. The emulator's per-run keys are masked in the logs and never printed.
+5. Runs `pytest -m aws_emulator`. Each test creates its own DynamoDB tables, S3 bucket and SQS queue and deletes them afterwards.
+6. Stops the emulator, which deletes its files and all in-memory resources.
+
+**Safety check:** before any emulator test runs, the suite checks that `AWS_ENDPOINT_URL` and every client's resolved endpoint are `https` on `127.0.0.1`, `localhost` or `::1`, and that no real-credential variables are present. Otherwise **every test fails** (`app/tests/aws/safety.py`).
+
+### Run the integration tests locally (Ubuntu/Debian)
+
+```bash
+# 1. Install the emulator (signature-verified, needs sudo for apt-get)
+bash scripts/aws-emulator/install-verified.sh
+
+# 2. Start it in the background and wait for the health check
+bash scripts/aws-emulator/start.sh
+
+# 3. Point the SDK at it in this shell (also unsets real AWS credential vars)
+source scripts/aws-emulator/env.sh
+
+# 4. Run the suite
+make test-aws          # = python -m pytest app/tests/aws -m aws_emulator --no-cov
+
+# 5. Stop it
+bash scripts/aws-emulator/start.sh stop
+```
+
+On other platforms, follow the [AWS Emulator getting-started guide](https://docs.aws.amazon.com/emulator/latest/userguide/getting-started.html) and then do steps 3 and 4. A plain `python -m pytest` (or `make test`) never runs the emulator tests; they are deselected by default.
+
+### Limitations
+
+- **IAM is not enforced.** AWS states that the emulator does not evaluate IAM or resource-based policies. A passing emulator run is **not** evidence that IAM permissions are correct. IAM stays covered by the static gates (Checkov on the Terraform IAM roles) and code review.
+- **Unimplemented operations return HTTP 501** (`NotImplemented`). The test fails, and the operation is listed under "AWS Emulator unimplemented operations (HTTP 501)" in the pytest summary. Do not work around it; report it.
+- **Fidelity varies by service and operation.** AWS checks emulator behaviour against `us-west-2` (global services against `us-east-1`). Treat these tests as functional tests of our code, not proof of identical AWS behaviour.
+- **One account (`000000000000`), resources not separated by Region, everything in memory** and deleted when the emulator stops. Not for load tests or production.
+- **Version is not pinned.** AWS publishes the package at an `LTS/latest` URL. The signature check proves it came from AWS. The installed version is printed in the job log.
+- **Never load real or cardholder data** into the emulator. Test fixtures are synthetic.
+
+---
+
 ## Monitoring and Dashboards
 
 The deployed API exposes Prometheus metrics at `/metrics`. Grafana Cloud scrapes them every 30 seconds, and a dashboard-as-code export lives in the repo.
@@ -181,6 +240,7 @@ Traffic panels exclude the scraper's own `/metrics` requests, so they show real 
 | Software Bill of Materials | Syft (SPDX JSON format) |
 | Image signing + provenance | Cosign keyless via GitHub OIDC + Sigstore |
 | Dynamic testing | OWASP ZAP baseline scan |
+| AWS integration testing | DynamoDB, S3 and SQS code paths tested against the local AWS Emulator (no AWS account) |
 | Infrastructure | Terraform modules (networking + EKS) + Kubernetes manifests |
 | Kubernetes security | NetworkPolicy default-deny, RBAC, Pod Security Standards |
 | Test coverage | pytest, 97%+ coverage, 101 tests |
@@ -216,9 +276,10 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 ├── app/                      FastAPI application
 │   ├── api/                  Route handlers and dependency injection
+│   ├── aws/                  Optional DynamoDB store, S3 audit, SQS events
 │   ├── core/                 Config, JWT security, logging
 │   ├── models/               Pydantic request/response models
-│   └── tests/                Unit + integration tests (101 tests)
+│   └── tests/                Unit + integration tests; tests/aws = AWS Emulator suite
 │
 ├── monitoring/
 │   └── grafana/              Grafana dashboard (JSON, dashboard as code)
@@ -240,6 +301,8 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 │   ├── pr-checks.yml         Fast PR feedback
 │   ├── scheduled-scan.yml    Weekly rescan
 │   └── pages.yml             Documentation site
+│
+├── scripts/aws-emulator/     Verified install, start/stop, SDK env for AWS Emulator
 │
 ├── docs/
 │   ├── ARCHITECTURE.md
@@ -285,6 +348,7 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | SBOM | Syft |
 | Image signing | Cosign + Sigstore |
 | DAST | OWASP ZAP |
+| AWS SDK / local AWS | boto3, AWS Emulator |
 | CI/CD | GitHub Actions |
 | Metrics | prometheus-client, prometheus-fastapi-instrumentator |
 | Dashboards | Grafana Cloud (Metrics Endpoint scrape job) |

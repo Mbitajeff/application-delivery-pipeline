@@ -14,7 +14,7 @@
 # Targets marked [REQUIRES DOCKER] will fail without Docker installed.
 # =============================================================================
 
-.PHONY: help install test lint scan scan-secrets scan-sast scan-sca \
+.PHONY: help install test test-aws lint scan scan-secrets scan-sast scan-sca \
         build image-build image-scan image-sign \
         kind-up kind-deploy kind-down \
         tf-validate tf-scan \
@@ -29,6 +29,7 @@ help:
 	@echo "  Development:"
 	@echo "    install       Install all dependencies (editable)"
 	@echo "    test          Run test suite with coverage"
+	@echo "    test-aws      Run AWS Emulator integration tests (emulator must be running)"
 	@echo "    lint          Run Ruff linter"
 	@echo "    run           Start the development server"
 	@echo ""
@@ -70,6 +71,10 @@ install:
 
 test:
 	python -m pytest
+
+# Requires a running AWS Emulator and `source scripts/aws-emulator/env.sh` (see README)
+test-aws:
+	python -m pytest app/tests/aws -m aws_emulator --no-cov
 
 test-no-cov:
 	python -m pytest --no-cov
