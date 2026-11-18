@@ -36,6 +36,21 @@ class Settings(BaseSettings):
     # closed to everyone (fail-closed).
     metrics_token: SecretStr | None = None
 
+    # AWS integrations: all OFF by default, so the app behaves exactly as
+    # before unless these are set. The SDK picks up region, credentials and
+    # endpoint from the standard AWS_* environment variables; nothing
+    # AWS-credential related is ever read from here.
+    #
+    # STORAGE_BACKEND=dynamodb switches get_db() to DynamoDB tables that are
+    # provisioned outside the app (IaC / test fixtures).
+    storage_backend: Literal["memory", "dynamodb"] = "memory"
+    dynamodb_users_table: str = "secure-pipeline-users"
+    dynamodb_items_table: str = "secure-pipeline-items"
+    # AUDIT_BUCKET: write an audit record to S3 for every item change.
+    audit_bucket: str | None = None
+    # EVENTS_QUEUE_URL: publish an item-change event to SQS.
+    events_queue_url: str | None = None
+
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
 

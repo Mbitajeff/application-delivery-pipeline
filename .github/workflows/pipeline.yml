@@ -145,6 +145,76 @@ jobs:
         continue-on-error: true
 
   # ---------------------------------------------------------------------------
+  # AWS Emulator integration tests: runs ALONGSIDE the security gates.
+  # It is not part of the gate chain (no other job needs it), so the order
+  # and behaviour of the 8 security gates are unchanged.
+  # ---------------------------------------------------------------------------
+  aws-emulator-tests:
+    name: AWS Emulator Integration Tests
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # No secrets are referenced in this job. The SDK is pointed at the local
+    # emulator only; its keys are generated per run and masked in logs.
+    # NOTE: the emulator does not evaluate IAM policies. Passing here is not
+    # evidence that IAM permissions are correct (Checkov covers IaC IAM).
+    env:
+      AWS_ENDPOINT_URL: https://127.0.0.1:9297
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_DISABLE_HOST_PREFIX_INJECTION: "true"
+      EMULATOR_TELEMETRY: "off"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Install AWS Emulator (official package, signature verified)
+        run: bash scripts/aws-emulator/install-verified.sh
+
+      - name: Guard against real AWS credentials
+        run: |
+          for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE; do
+            if [ -n "${!var+set}" ]; then
+              echo "::error::${var} is set in the emulator job; refusing to continue."
+              exit 1
+            fi
+          done
+          echo "No real AWS credential variables present."
+
+      - name: Start AWS Emulator and wait for health check
+        run: bash scripts/aws-emulator/start.sh
+
+      - name: Run AWS Emulator integration tests
+        run: |
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+          python -m pytest app/tests/aws -m aws_emulator --no-cov \
+            --junitxml=aws-emulator-junit.xml
+
+      - name: Stop AWS Emulator
+        if: always()
+        run: bash scripts/aws-emulator/start.sh stop
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aws-emulator-junit-${{ github.sha }}
+          path: aws-emulator-junit.xml
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
   # Job 5: tests + coverage
   # ---------------------------------------------------------------------------
   test:
